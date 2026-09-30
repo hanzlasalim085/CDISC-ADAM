@@ -1,0 +1,254 @@
+ ADSL dataset for a parallel arm study
+
+%include "<path>\ADaM_ADSL_L1101_data.txt";
+ 
+options validvarname=upcase;
+ 
+*==============================================================================;
+* Programming for the Task;
+*==============================================================================;
+ 
+*==============================================================================;
+*==============================================================================;
+*Merge DM and SUPPDM;
+*==============================================================================;
+ 
+*------------------------------------------------------------------------------;
+*Transponse SUPPDM data such that each QNAM becomes a variable;
+*------------------------------------------------------------------------------;
+ 
+proc transpose data=suppdm out=suppdm01;
+   by studyid usubjid;
+   id qnam;
+   idlabel qlabel;
+   var qval;
+run;
+ 
+data dm01;
+   merge dm(in=a) suppdm01;
+   by studyid usubjid;
+   if a;
+run;
+ 
+*==============================================================================;
+*create variables that are directly based on input variables;
+*==============================================================================;
+ 
+data adsl01;
+    set dm01;
+    length trt01p trt01a $30;
+ 
+*------------------------------------------------------------------------------;
+*Planned and actual treatment values;
+*------------------------------------------------------------------------------;
+ 
+    if armcd="PBO" then do;
+        trt01p="Placebo";
+        trt01pn=1;
+    end;
+    else if armcd="ACTIVE" then do;
+        trt01p="Active";
+        trt01pn=2;
+    end;
+ 
+    if actarmcd="PBO" then do;
+        trt01a="Placebo";
+        trt01an=1;
+    end;
+    else if actarmcd="ACTIVE" then do;
+        trt01a="Active";
+        trt01an=2;
+    end;
+ 
+*------------------------------------------------------------------------------;
+*Date conversions;
+*------------------------------------------------------------------------------;
+    if length(rfxstdtc) ge 10 then tr01sdt=input(rfxstdtc,??yymmdd10.);
+    if length(rfxendtc) ge 10 then tr01edt=input(rfxendtc,??yymmdd10.);
+    if length(rficdtc) ge 10 then rficdt=input(rficdtc,??yymmdd10.);
+    if length(rfpendtc) ge 10 then lstalvdt=input(rfpendtc,??yymmdd10.);
+    if length(dthdtc) ge 10 then dthdt=input(dthdtc,??yymmdd10.);
+    trtsdt=tr01sdt;
+    trtedt=tr01edt;
+ 
+    format tr01sdt tr01edt rficdt lstalvdt trtsdt trtedt dthdt date9.;
+ 
+*------------------------------------------------------------------------------;
+*Grouping variables;
+*------------------------------------------------------------------------------;
+ 
+    length agegr1 $30;
+    if . lt age lt 60 then do;
+        agegr1="< 60 Years";
+        agegr1n=1;
+    end;
+    else if age ge 60 then do;
+        agegr1=">= 60 Years";
+        agegr1n=2;
+    end;
+run;
+ 
+*==============================================================================;
+*Process disposition data for treatment and study status;
+*==============================================================================;
+ 
+*------------------------------------------------------------------------------;
+*Enrollment;
+*------------------------------------------------------------------------------;
+ 
+data enrl01;
+    set ds;
+    where dsterm="ENROLLED";
+    if length(dsstdtc) ge 10 then enrldt=input(dsstdtc,yymmdd10.);
+    format enrldt date9.;
+ 
+    keep studyid usubjid enrldt;
+run;
+ 
+*------------------------------------------------------------------------------;
+*Randomization;
+*------------------------------------------------------------------------------;
+ 
+data rand01;
+    set ds;
+    where dsdecod="RANDOMIZED";
+    if length(dsstdtc) ge 10 then randdt=input(dsstdtc,yymmdd10.);
+    format randdt date9.;
+ 
+    keep studyid usubjid randdt;
+run;
+ 
+*------------------------------------------------------------------------------;
+*End of treatment;
+*------------------------------------------------------------------------------;
+data eot01;
+    set ds;
+    length eotstt $30;
+    where dsscat="END OF TREATMENT";
+ 
+    if dsdecod="COMPLETED" then do;
+        eotstt="COMPLETED";
+    end;
+    else if dsdecod ne "" then do;
+        eotstt="DISCONTINUED";
+        dctreas=dsdecod;
+    end;
+    ineot=1;
+    keep studyid usubjid eotstt dctreas ineot;
+run;
+ 
+*------------------------------------------------------------------------------;
+*End of study;
+*------------------------------------------------------------------------------;
+ 
+data eos01;
+    set ds;
+    length eosstt $30;
+    where dsscat="END OF STUDY";
+ 
+    if dsdecod="COMPLETED" then do;
+        eosstt="COMPLETED";
+    end;
+    else if dsdecod ne "" then do;
+        eosstt="DISCONTINUED";
+        dcsreas=dsdecod;
+    end;
+    if length(dsstdtc) ge 10 then eosdt=input(dsstdtc,yymmdd10.);
+    ineos=1;
+    keep studyid usubjid eosstt dcsreas eosdt ineos;
+ 
+    format eosdt date9.;
+run;
+ 
+*==============================================================================;
+*Baseline variables from vital signs;
+*==============================================================================;
+data heightbl(rename=(vsstresn=heightbl))
+     weightbl(rename=(vsstresn=weightbl))
+      ;
+   set vs;
+   where vsblfl="Y";
+   if vstestcd="HEIGHT" then output heightbl;
+   else if vstestcd="WEIGHT" then output weightbl;
+   keep studyid usubjid vsstresn;
+run;
+ 
+*==============================================================================;
+*Bring disposition and vital signs related info into parent dataset;
+*==============================================================================;
+ 
+proc sort data=adsl01;
+    by studyid usubjid;
+run;
+ 
+proc sort data=eot01;
+    by studyid usubjid;
+run;
+ 
+proc sort data=eos01;
+    by studyid usubjid;
+run;
+ 
+data adsl02;
+    merge adsl01(in=a) eot01 eos01 enrl01 rand01 heightbl weightbl;
+    by studyid usubjid;
+    if a;
+run;
+ 
+*==============================================================================;
+*create variables/assign values to existing variables which are dependent on
+other variables;
+*==============================================================================;
+ 
+data adsl03;
+    set adsl02;
+ 
+ 
+*------------------------------------------------------------------------------;
+*population flags;
+*------------------------------------------------------------------------------;
+ 
+    if trtsdt ne . then saffl="Y";
+    else saffl="N";
+ 
+    if randdt ne . then randfl="Y";
+    else randfl="N";
+ 
+    if enrldt ne . then enrlfl="Y";
+    else enrlfl="N";
+ 
+    if eosstt="COMPLETED" then complfl="Y";
+    else complfl="N";
+ 
+*------------------------------------------------------------------------------;
+*treatment and study status - ongoing;
+*------------------------------------------------------------------------------;
+ 
+    if eotstt="" and missing(ineot) and saffl="Y" then eotstt="ONGOING";
+    if eosstt="" and missing(ineos) and upcase(arm) ne "SCREEN FAILURE" then eosstt="ONGOING";
+ 
+*------------------------------------------------------------------------------;
+*Other variables;
+*------------------------------------------------------------------------------;
+    if nmiss(trtsdt,trtedt)=0 then trtdurd=trtedt-trtsdt+1;
+run;
+ 
+ 
+*==============================================================================;
+*keep only required variables ;
+*==============================================================================;
+ 
+%let varlist=STUDYID USUBJID SUBJID SITEID AGE AGEU AGEGR1 AGEGR1N SEX RACE
+RACE1 RACE2 RACESP
+SAFFL COMPLFL RANDFL ENRLFL ARM ACTARM TRT01P TRT01PN TRT01A TRT01AN TRTSDT
+TRTEDT TR01SDT TR01EDT EOSSTT EOSDT DCSREAS EOTSTT DCTREAS RFICDT ENRLDT
+RANDDT LSTALVDT TRTDURD DTHDT HEIGHTBL WEIGHTBL;
+;
+ 
+data adsl output;
+   retain &varlist.;
+   set adsl03;
+   keep &varlist.;
+run;
+ 
+
